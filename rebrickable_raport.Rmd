@@ -1,0 +1,184 @@
+---
+title: "ZED-projekt"
+author: "Sebastian Grabowski"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, error=FALSE, warning=FALSE, message=FALSE)
+```
+```{r prettyTable, echo=FALSE}
+library(DT)
+library(dplyr)
+library(EDAWR)
+library(knitr)
+library(ggplot2)
+library(plotly)
+library(scales)
+library(vtable)
+library(tidyr)
+library(DT)
+library(kableExtra)
+```
+
+## Podsumowanie 
+
+Poniższa analiza wykorzystuje bazę danych Rebricable skupiając się na obszarze motywów i zestawów. Analiza wizualizuje dane dotyczące liczby zestawów, liczby motywów, średniej liczby części w zestawie. Pokazuję również przyrost liczby części na przestrzeni lat z podziałem na motywy główne tj. takie do których przypisane są motywy potomne. W dalszej części analizy bliżej przyglądam się zestawowi 'The lord of the rings' i figurkom jakie on zawiera. Ostatnia cześc analizy dotyczy podziału wszystkich elementów na ich kolory. 
+
+W analizie widać wzrost badanych statystyk na przestrzeni lat. Zarówno liczba zestawów, liczba motywów, motywów głównych, średnia liczba części w zestawie jak i sumaryczna liczba części lego rośnie z biegiem lat, szczególnie gwałtownie w ostatnich kilku latach kiedy to wszystkie te statystki osiągają swój szczyt. Pochylając się nad figurarkami z zestawy 'The lord of the rings' nieoczekiwanie żadna z głównych postaci nie jest najbardziej popularną figurką w tym zestawie. Przodują w tej statystyce postacie drugoplanowe 'Uruk-Hai' oraz 'Mordor-Orc'. Wynika to z tego, że postacie te występują w kilku wersjach, a zestaw danych został zmodyfikowany do podstawowych nazw figurek.Statystyki kolorów wskazują na duża dywersyfikacje kolorów. Jedynie biały oraz czarny kolor występuje w około 9% całego zbioru, reszta kolorów nie przekracza 6%.
+
+## Statystyki dotyczących zestawów oraz motywów
+
+```{r sets_and_themes, warning=FALSE,fig.width=8, fig.height=8}
+sets <-  read.csv("rebrickable\\sets.csv", header=TRUE) %>% select(0:5)
+
+themes <-  read.csv("rebrickable\\themes.csv", header=TRUE) %>% select(0:3) 
+
+themes$parent_id <- dplyr::coalesce(themes$parent_id, themes$id)
+themes_parent <- themes %>%
+    left_join(themes, by = c("parent_id" = "id")) %>% select(id = id, name = name.x, parent_id, parent_name = name.y)
+sets_themes <- merge(sets, themes_parent, by.x = "theme_id", by.y = "id", suffixes = c("_sets", "_theme"))
+
+sets_year_mean <- sets_themes %>%
+     group_by(year) %>%
+     summarise(total_parts = mean(num_parts), number_of_sets = n(), number_of_themes = n_distinct(theme_id), number_of_parent_themes = n_distinct(parent_id),na.rm = TRUE)
+
+theme_set_plot_basic <- ggplot(sets_year_mean, aes(x = year)) +
+    geom_line(aes(y = total_parts, color = "Średnia liczba części w zestawie")) +
+    geom_line(aes(y = number_of_sets, color = "Liczba zestawów")) +
+    geom_line(aes(y = number_of_themes, color = "Liczba motywów")) +
+    geom_line(aes(y = number_of_parent_themes, color = "Liczba motywów głównych")) +
+    labs(title = "Zestawy i motywy", y="",x = "Rok", color = 'Statystyki') +
+    scale_color_manual(values = c("Średnia liczba części w zestawie" = "blue", "Liczba zestawów" = "green", "Liczba motywów" = "orange", "Liczba motywów głównych" = "red"))
+
+ggplotly(theme_set_plot_basic)
+```
+
+## Rozkład gęstości 
+```{r density, fig.width=8}
+sets_stats <- sets_year_mean %>% gather(key = "param", value = "value",2:5) %>% select(-(na.rm))
+my_labeller <- as_labeller(c(total_parts = "Średnia liczba części w zestawie", number_of_sets = "Liczba zestawów", number_of_themes = "Liczba motywów", number_of_parent_themes = "Liczba motywów głównych"))
+sets_density_plot <- ggplot(sets_stats, aes(x = value)) + geom_density() + facet_wrap(~param, ncol=1, scales = "free", labeller = my_labeller)
+ggplotly(sets_density_plot)
+```
+## Korelacja między średnia liczbą części w zestawie, a liczbą zestawów
+
+```{r corelation, fig.width=8}
+cor_plot <- ggplot(sets_year_mean, aes(x = total_parts, y = number_of_sets)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  labs(x = "Średnia liczba części w zestawie", y = "Liczba zestawów")
+cor_test <- cor.test(sets_year_mean$total_parts, sets_year_mean$number_of_sets, method = "pearson")
+
+cor_test_results <- data.frame(
+  Estimate = cor_test$estimate,
+  P.Value = cor_test$p.value,
+  Confidence.Interval = paste0("[", round(cor_test$conf.int[1], 3), ", ", round(cor_test$conf.int[2], 3), "]"),
+  Method = "Pearson's Correlation"
+)
+
+ggplotly(cor_plot)
+
+kable(cor_test_results, 
+      caption = "Wyniki Testu Korelacji Pearsona", 
+      align = 'c') %>%
+  kable_styling(font_size = 12, latex_options = c("striped", "scale_down")) %>%
+  column_spec(1, width = "3cm") %>%
+  column_spec(2, width = "3cm") %>%
+  column_spec(3, width = "4cm") %>%
+  column_spec(4, width = "3cm")
+```
+## Liczba części w nowych zestawach z podziałem na motywy
+
+Poniższy wykres wizualizuje liczbę części w zestawach w kolejnych latach, z podziałem na motywy główne - motywy które mogę być motywem rodzicem innego motywu. 
+
+```{r themes, warning=FALSE,fig.width=8, fig.height=8}
+sets_themes_sum <- sets_themes %>%
+    group_by(parent_name, year) %>%
+    summarise(total_parts = sum(num_parts, na.rm = TRUE))
+theme_sum_plot <- ggplot(data = sets_themes_sum, aes(x = year, y = total_parts, fill= parent_name)) +
+    geom_area() +
+  labs( y="Liczba części",x = "Rok", fill = 'Motywy') +
+  scale_y_log10()
+
+theme_sum_plot <- theme_sum_plot + scale_y_continuous(labels = label_comma())
+ggplotly(theme_sum_plot)
+```
+
+## Liczba zestawów oraz statystki ilościowe części w poszczególnych motywach głównych
+
+```{r stats_1, fig.width=8}
+st(sets_themes %>% spread(parent_name, num_parts) %>% select(-(theme_id), -(parent_id), -(year)))
+```
+
+## Najpopularniejsze figurki w "The Lord of the Rings"
+
+```{r minifigs}
+minifigs <- read.csv("rebrickable\\minifigs.csv", header=TRUE) %>% select(0:3) 
+inv_minifigs <- read.csv("rebrickable\\inventory_minifigs.csv", header=TRUE)
+inv <-  read.csv("rebrickable\\inventories.csv", header=TRUE)
+lotr = sets_themes %>% filter(name_theme == "The Lord of the Rings")
+
+df_minifig_inv <- merge(minifigs, inv_minifigs, by = "fig_num")
+df_minifig_inv <- merge(df_minifig_inv, inv, by.x = "inventory_id", by.y = 'id')
+df_minifig_lotr <- merge(df_minifig_inv, lotr, by ="set_num", suffixes = c("_minifig", "_set"))
+df_minifig_lotr$name <- gsub("Gandalf.*", "Gandalf", df_minifig_lotr$name)
+df_minifig_lotr$name <- gsub(" -.*", "", df_minifig_lotr$name)
+df_minifig_lotr$name <- gsub("Uruk-Hai ", "Uruk-Hai", df_minifig_lotr$name)
+df_minifigs_lotr_gruped <- df_minifig_lotr %>% group_by(name) %>% summarise(minifg_count = n()) %>% arrange(desc(minifg_count)) %>% slice_head(n = 10)
+minifigs_plot <- ggplot(df_minifigs_lotr_gruped, aes(x = name, y = minifg_count)) +
+  geom_bar(stat = 'identity', alpha = 1, width = 0.6) +
+  labs(
+    title = "10 najbardziej popularnych figurek w zestawie 'The Lord of the Rings'",
+    x = "Postać",
+    y = "Liczba zestawów",
+    fill = "Color"
+  ) +
+  theme(axis.text.x = element_text(angle = 30, hjust = 1)) 
+ggplotly(minifigs_plot)
+```
+
+
+## Najbardziej popularne kolory wśród elementów
+```{r colors,  fig.width=8}
+colorss <- read.csv("rebrickable\\colors.csv", header=TRUE)
+elements <- read.csv("rebrickable\\elements.csv", header=TRUE)
+
+elements_grouped <- elements %>%
+  group_by(color_id) %>%
+  summarise(color_count = n()) %>%
+  mutate(color_percentage = (color_count / sum(color_count)) * 100)
+
+color_elements <- merge(colorss, elements_grouped, by.x = "id", by.y = "color_id")
+color_elements$rgb <- paste0("#", color_elements$rgb)
+color_elements <- color_elements %>% 
+                  filter(name != "[No Color/Any Color]", name != "[Unknown]") %>%
+                  arrange(desc(color_count)) %>%
+                  slice_head(n = 15) %>%
+                  arrange(name)
+
+color_element_plot <- ggplot(color_elements, aes(x = name, y = color_percentage, fill = name)) +
+  geom_bar(stat = 'identity', alpha = 1, width = 0.4) +
+  scale_fill_manual(values = color_elements$rgb) +
+  coord_flip() +
+  labs(
+    title = "15 najbardziej popularnych kolorów wśród pojedynczych elementów",
+    x = "Kolor",
+    y = "Procent w zestawie elementów",
+    fill = "Color"
+  ) +
+  theme_bw() +
+  theme(
+    panel.background = element_rect(fill = "#EDEDED"),
+    panel.grid.major = element_line(color = "black"),
+    panel.grid.minor = element_line(color = "black"),
+    panel.spacing = unit(0.1, "lines"),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+
+ggplotly(color_element_plot)
+```
